@@ -2126,6 +2126,11 @@ fn adjust_angle_for_rotation(angle_rad: f32, page_rotation: i32) -> f32 {
         _ => {}
     }
     a = a.rem_euclid(2.0 * PI);
+    // Float error can leave a full turn a hair under 2π (e.g. π + PDFium's
+    // 3.1415925), which would surface as 359.99998° instead of 0°.
+    if 2.0 * PI - a < 1e-4 {
+        a = 0.0;
+    }
     a
 }
 
@@ -3170,10 +3175,23 @@ impl SegmentBuilder {
 
         self.font_weight = meta.font_weight;
 
-        // Angle adjusted for page rotation
+        // Angle adjusted for page rotation.
+        //
+        // PDFium's per-char angle comes from the char matrix (Tm × CTM,
+        // including horizontal scaling) and ignores the sign of the font
+        // size. A negative `Tf` operand scales glyph space by -1 on both
+        // axes, i.e. a 180° rotation, so a page that pairs a y-flipped CTM
+        // and `-100 Tz` with a negative font size renders perfectly upright
+        // while PDFium reports 180°. Fold the font-size sign back in so
+        // `rotation` describes what the reader sees.
         let angle_rad = cv.ch.angle();
         self.rotation_deg = if angle_rad >= 0.0 {
-            adjust_angle_for_rotation(angle_rad, page_rotation).to_degrees()
+            let visual = if meta.font_size < 0.0 {
+                angle_rad + std::f32::consts::PI
+            } else {
+                angle_rad
+            };
+            adjust_angle_for_rotation(visual, page_rotation).to_degrees()
         } else {
             0.0
         };
