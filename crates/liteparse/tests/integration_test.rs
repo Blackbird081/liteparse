@@ -947,3 +947,38 @@ fn raw_text_items_account_for_every_glyph() {
         "sample text survives: {text:?}"
     );
 }
+
+/// A page whose content stream pairs a y-flipped CTM and `-100 Tz` with a
+/// negative `Tf` operand renders upright, but PDFium's per-char angle only
+/// sees the mirrored char matrix and reports 180°. `rotation` must describe
+/// the visual orientation, otherwise callers that "correct" page rotation
+/// from it flip an upright page upside down.
+#[tokio::test]
+async fn test_negative_font_size_is_not_reported_as_rotated() {
+    let lit = LiteParse::new(LiteParseConfig {
+        ocr_enabled: false,
+        ..LiteParseConfig::default()
+    });
+    let parsed = lit
+        .parse("../../integration_tests_data/negative_font_size.pdf")
+        .await
+        .expect("Should parse PDF");
+
+    let items: Vec<_> = parsed
+        .pages
+        .iter()
+        .flat_map(|p| p.text_items.iter())
+        .collect();
+    assert!(!items.is_empty(), "expected native text items");
+    for item in &items {
+        assert!(
+            item.rotation.abs() < 1.0,
+            "item {:?} reported rotation {} on an upright page",
+            item.text,
+            item.rotation
+        );
+    }
+    let text = parsed.pages[0].text.as_str();
+    assert!(text.contains("Upright text drawn with a negative font size"));
+    assert!(text.contains("Second line stays upright too"));
+}
